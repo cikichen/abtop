@@ -150,12 +150,20 @@ fn draw_source_column(
             .add_modifier(Modifier::BOLD),
     )));
 
+    // Reset countdown is only meaningful when the data is fresh enough
+    // that the reported `resets_at` is still in the future. Stale sources
+    // get the bar (the % is approximately correct) but no countdown row.
+    let show_reset = !is_stale;
+
     if let Some(used_pct) = rl.five_hour_pct {
         let remaining = (100.0 - used_pct).clamp(0.0, 100.0);
-        let reset = rl
-            .five_hour_resets_at
-            .map(format_reset_time)
-            .unwrap_or_default();
+        let reset = if show_reset {
+            rl.five_hour_resets_at
+                .map(format_reset_time)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let c = grad_at(cpu_grad, used_pct);
         let label_5h = t("quota.5h");
         let mut s = vec![styled_label(
@@ -177,10 +185,13 @@ fn draw_source_column(
     }
     if let Some(used_pct) = rl.seven_day_pct {
         let remaining = (100.0 - used_pct).clamp(0.0, 100.0);
-        let reset = rl
-            .seven_day_resets_at
-            .map(format_reset_time)
-            .unwrap_or_default();
+        let reset = if show_reset {
+            rl.seven_day_resets_at
+                .map(format_reset_time)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let c = grad_at(cpu_grad, used_pct);
         let label_7d = t("quota.7d");
         let mut s = vec![styled_label(
@@ -205,16 +216,19 @@ fn draw_source_column(
 }
 
 /// Format a reset timestamp as a human countdown labeled "in X" so the
-/// row reads as a time-until-reset rather than an ambiguous duration.
-/// When the reset moment is at or in the past, returns the localized
-/// "now" sentinel without the prefix.
+/// row reads as a time-until-reset. Returns an empty string when the
+/// reset is already in the past — the actual next reset depends on the
+/// window length which the caller doesn't track, and showing a "now"
+/// sentinel was misleading on stale sources where the window had
+/// already rolled over multiple times. Callers skip the row when this
+/// returns empty.
 pub(crate) fn format_reset_time(reset_ts: u64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     if reset_ts <= now {
-        return t("quota.now");
+        return String::new();
     }
     let diff = reset_ts - now;
     let prefix = t("quota.in");
