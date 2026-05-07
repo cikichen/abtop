@@ -416,15 +416,15 @@ pub fn cmd_has_binary(cmd: &str, name: &str) -> bool {
     })
 }
 
-/// Windows variant: scans all argv-like tokens, splits on `\`, strips a
+/// Windows variant: checks executable-position tokens, splits on `\`, strips a
 /// trailing `.exe` and common script extensions (`.js`, `.sh`, `.py`), and
 /// matches case-insensitively.
 /// Kept separate from the unix impl so non-Windows matching stays exact
 /// (`Claude` must not match `claude` on linux/macOS).
 #[cfg(windows)]
 pub fn cmd_has_binary(cmd: &str, name: &str) -> bool {
-    cmd.split_whitespace().any(|tok| {
-        let tok = tok.trim_matches('"');
+    windows_command_tokens(cmd).into_iter().take(2).any(|tok| {
+        let tok = tok.as_str();
         let mut iter = tok.rsplit(['/', '\\']);
         let base = iter.next().unwrap_or(tok);
         let base = base
@@ -442,6 +442,31 @@ pub fn cmd_has_binary(cmd: &str, name: &str) -> bool {
                 if versions.eq_ignore_ascii_case("versions") && parent.eq_ignore_ascii_case(name)
         )
     })
+}
+
+#[cfg(windows)]
+fn windows_command_tokens(cmd: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in cmd.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 pub fn collect_git_stats(cwd: &str) -> (u32, u32) {
@@ -515,6 +540,15 @@ mod tests {
     fn cmd_has_binary_windows_detects_node_wrapped_codex() {
         assert!(cmd_has_binary(
             r#""C:\Program Files\nodejs\node.exe" C:\Users\GK\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js -m gpt-5.5"#,
+            "codex",
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_has_binary_windows_ignores_codex_in_later_args() {
+        assert!(!cmd_has_binary(
+            r#""C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile "C:\Users\GK\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js""#,
             "codex",
         ));
     }
